@@ -92,3 +92,11 @@ src/
 **Later.** Frozen columns that remain correct under virtualization, fill handle, incremental recalc, Storybook for the grid primitive, axe and visual checks in CI.
 
 **Out of scope for this version.** Collaboration, backend and auth, Excel-complete function coverage, multiple sheets, CSV import, a published `@tablinum/grid` package.
+
+## License
+
+[MIT](./LICENSE)
+
+## Contributing
+
+Development follows GitHub flow (feature branches, pull requests, tagged releases). See [CONTRIBUTING.md](./CONTRIBUTING.md).
