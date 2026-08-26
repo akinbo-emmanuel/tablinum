@@ -1,0 +1,10 @@
+export const ROW_COUNT = 50_000;
+export const COL_COUNT = 26;
+export const ROW_HEIGHT = 28;
+export const COL_HEADER_HEIGHT = 32;
+export const ROW_GUTTER_WIDTH = 56;
+export const DEFAULT_COL_WIDTH = 120;
+export const MIN_COL_WIDTH = 48;
+export const OVERSCAN_ROWS = 10;
+export const OVERSCAN_COLS = 2;
+export const MAX_HISTORY = 100;

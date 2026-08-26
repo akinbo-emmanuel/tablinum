@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+:root,
+[data-theme="day"] {
+  --paper: #f3eee4;
+  --header: #ebe4d6;
+  --ink: #1c1914;
+  --muted: #7a7266;
+  --line: #d8d0c3;
+  --select: #d5e0d6;
+  --accent: #3f5c48;
+  --danger: #9b3a2f;
+}
+
+[data-theme="night"] {
+  --paper: #161410;
+  --header: #1e1b16;
+  --ink: #ece6da;
+  --muted: #9a9184;
+  --line: #2c2822;
+  --select: #2a382e;
+  --accent: #8fbf9a;
+  --danger: #e07a6a;
+}
+
+@theme inline {
+  --color-background: var(--paper);
+  --color-foreground: var(--ink);
+  --font-sans: var(--font-ibm-sans);
+  --font-mono: var(--font-ibm-mono);
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ibm-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+.grid-scroller {
+  scrollbar-color: var(--line) transparent;
+}
+
+.grid-scroller:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
