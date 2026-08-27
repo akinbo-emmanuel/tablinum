@@ -3,21 +3,26 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
-  useState,
   type ClipboardEvent,
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
-import { colToLetter, toA1, type Coord } from "@/lib/grid/address";
+import { colToLetter, normalizeRange, toA1, type Coord } from "@/lib/grid/address";
 import {
   COL_HEADER_HEIGHT,
-  OVERSCAN_COLS,
-  OVERSCAN_ROWS,
   ROW_GUTTER_WIDTH,
   ROW_HEIGHT,
 } from "@/lib/grid/constants";
+import {
+  columnGridBackground,
+  paintCellLayer,
+  paintRowGutter,
+  paintSelectionChrome,
+  type CellPaintApi,
+} from "@/lib/grid/paint";
 import type { WorkbookApi } from "@/hooks/useWorkbook";
 
 type Props = {
@@ -40,14 +45,13 @@ export function DataGrid({
   onCancelEdit,
 }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
+  const gutterRef = useRef<HTMLDivElement>(null);
+  const cellLayerRef = useRef<HTMLDivElement>(null);
+  const selectRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [viewport, setViewport] = useState({
-    width: 0,
-    height: 0,
-    scrollTop: 0,
-    scrollLeft: 0,
-  });
   const dragging = useRef(false);
+  const paintApiRef = useRef<CellPaintApi | null>(null);
 
   const colOffsets = useMemo(() => {
     const offsets = [0];
@@ -59,50 +63,61 @@ export function DataGrid({
 
   const totalWidth = colOffsets[colOffsets.length - 1] ?? 0;
   const totalHeight = book.rows * ROW_HEIGHT;
+  const gridBackground = useMemo(
+    () => columnGridBackground(colOffsets, totalWidth),
+    [colOffsets, totalWidth],
+  );
+
+  const paintFrame = useCallback(() => {
+    const el = scroller.current;
+    const gutter = gutterRef.current;
+    const layer = cellLayerRef.current;
+    const selectEl = selectRef.current;
+    const activeEl = activeRef.current;
+    const api = paintApiRef.current;
+    if (!el || !gutter || !layer || !selectEl || !activeEl || !api) return;
+    paintRowGutter(el, gutter, api.rows);
+    paintCellLayer(el, layer, api);
+    paintSelectionChrome(el, selectEl, activeEl, api);
+  }, []);
+
+  useLayoutEffect(() => {
+    paintApiRef.current = {
+      rows: book.rows,
+      cols: book.cols,
+      colOffsets,
+      colWidths: book.colWidths,
+      getDisplay: book.getDisplay,
+      hideCell: editing ? book.active : null,
+      active: book.active,
+      selection: normalizeRange(book.active, book.anchor),
+    };
+    paintFrame();
+  }, [
+    book.active,
+    book.anchor,
+    book.cols,
+    book.colWidths,
+    book.getDisplay,
+    book.rows,
+    colOffsets,
+    editing,
+    paintFrame,
+  ]);
 
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const sync = () => {
-      setViewport({
-        width: el.clientWidth,
-        height: el.clientHeight,
-        scrollTop: el.scrollTop,
-        scrollLeft: el.scrollLeft,
-      });
-    };
-    sync();
-    const ro = new ResizeObserver(sync);
+    const onScroll = () => paintFrame();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro = new ResizeObserver(() => paintFrame());
     ro.observe(el);
-    el.addEventListener("scroll", sync, { passive: true });
+    paintFrame();
     return () => {
+      el.removeEventListener("scroll", onScroll);
       ro.disconnect();
-      el.removeEventListener("scroll", sync);
     };
-  }, []);
-
-  const startRow = Math.max(
-    0,
-    Math.floor(viewport.scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS,
-  );
-  const endRow = Math.min(
-    book.rows - 1,
-    Math.ceil((viewport.scrollTop + viewport.height) / ROW_HEIGHT) +
-      OVERSCAN_ROWS,
-  );
-
-  const startCol = useMemo(() => {
-    let i = 0;
-    while (i < book.cols - 1 && colOffsets[i + 1] < viewport.scrollLeft) i += 1;
-    return Math.max(0, i - OVERSCAN_COLS);
-  }, [book.cols, colOffsets, viewport.scrollLeft]);
-
-  const endCol = useMemo(() => {
-    const right = viewport.scrollLeft + Math.max(viewport.width, 1);
-    let i = startCol;
-    while (i < book.cols - 1 && colOffsets[i] < right) i += 1;
-    return Math.min(book.cols - 1, i + OVERSCAN_COLS);
-  }, [book.cols, colOffsets, startCol, viewport.scrollLeft, viewport.width]);
+  }, [paintFrame]);
 
   const scrollActiveIntoView = useCallback(
     (coord: Coord) => {
@@ -309,142 +324,112 @@ export function DataGrid({
     window.addEventListener("pointerup", onUp);
   };
 
-  const visibleRows: number[] = [];
-  for (let r = startRow; r <= endRow; r++) visibleRows.push(r);
-  const visibleCols: number[] = [];
-  for (let c = startCol; c <= endCol; c++) visibleCols.push(c);
-
   return (
-    <div
-      ref={scroller}
-      className="grid-scroller relative h-full overflow-auto bg-[var(--paper)]"
-      role="grid"
-      aria-rowcount={book.rows}
-      aria-colcount={book.cols}
-      aria-activedescendant={`cell-${book.active.row}-${book.active.col}`}
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      onPaste={onPaste}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onDoubleClick={onDoubleClick}
-    >
+    <div className="relative h-full min-h-0">
       <div
-        className="relative"
+        ref={scroller}
+        className="grid-scroller h-full overflow-auto bg-[var(--paper)]"
+        role="grid"
+        aria-rowcount={book.rows}
+        aria-colcount={book.cols}
+        aria-label={`Spreadsheet, active cell ${toA1(book.active.row, book.active.col)}`}
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        onPaste={onPaste}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onDoubleClick={onDoubleClick}
+      >
+        <div
+          className="relative"
+          style={{
+            width: totalWidth + ROW_GUTTER_WIDTH,
+            height: totalHeight + COL_HEADER_HEIGHT,
+            ...gridBackground,
+          }}
+        >
+          <div
+            className="sticky top-0 z-20 border-b border-[var(--line)] bg-[var(--header)]"
+            style={{
+              height: COL_HEADER_HEIGHT,
+              width: totalWidth + ROW_GUTTER_WIDTH,
+            }}
+          >
+            <div
+              className="sticky left-0 z-30 border-r border-[var(--line)] bg-[var(--header)]"
+              style={{ width: ROW_GUTTER_WIDTH, height: COL_HEADER_HEIGHT }}
+            />
+            {Array.from({ length: book.cols }, (_, col) => (
+              <div
+                key={`h-${col}`}
+                className="absolute top-0 flex items-center justify-center border-r border-[var(--line)] text-[11px] font-medium tracking-wide text-[var(--muted)]"
+                style={{
+                  left: ROW_GUTTER_WIDTH + colOffsets[col],
+                  width: book.colWidths[col],
+                  height: COL_HEADER_HEIGHT,
+                }}
+              >
+                {colToLetter(col)}
+                <div
+                  data-resize=""
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={`Resize column ${colToLetter(col)}`}
+                  className="absolute top-0 right-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-[var(--accent)]"
+                  onPointerDown={(e) => resizeCol(col, e)}
+                />
+              </div>
+            ))}
+          </div>
+          {editing ? (
+            <input
+              ref={inputRef}
+              aria-label={`Edit ${toA1(book.active.row, book.active.col)}`}
+              className="absolute z-20 box-border bg-[var(--paper)] px-2 font-mono text-[13px] text-[var(--ink)] outline-none ring-2 ring-inset ring-[var(--accent)]"
+              style={{
+                top: COL_HEADER_HEIGHT + book.active.row * ROW_HEIGHT,
+                left: ROW_GUTTER_WIDTH + colOffsets[book.active.col],
+                width: book.colWidths[book.active.col],
+                height: ROW_HEIGHT,
+              }}
+              value={draft}
+              onChange={(e) => onDraftChange(e.target.value)}
+              onPointerDown={(e) => e.stopPropagation()}
+            />
+          ) : null}
+        </div>
+      </div>
+      <div
+        ref={gutterRef}
+        aria-hidden
+        className="pointer-events-none absolute z-20 overflow-hidden border-r border-[var(--line)] bg-[var(--header)]"
         style={{
-          width: totalWidth + ROW_GUTTER_WIDTH,
-          height: totalHeight + COL_HEADER_HEIGHT,
+          left: 0,
+          top: COL_HEADER_HEIGHT,
+          bottom: 0,
+          width: ROW_GUTTER_WIDTH,
+        }}
+      />
+      <div
+        className="pointer-events-none absolute z-10 overflow-hidden"
+        style={{
+          left: ROW_GUTTER_WIDTH,
+          top: COL_HEADER_HEIGHT,
+          right: 0,
+          bottom: 0,
         }}
       >
-        {visibleRows.map((row) => (
-          <div
-            key={row}
-            role="row"
-            aria-rowindex={row + 1}
-            className="absolute"
-            style={{
-              top: row * ROW_HEIGHT + COL_HEADER_HEIGHT,
-              left: ROW_GUTTER_WIDTH,
-              height: ROW_HEIGHT,
-              width: totalWidth,
-            }}
-          >
-            {visibleCols.map((col) => {
-              const coord = { row, col };
-              const active = book.active.row === row && book.active.col === col;
-              const selected = book.inSelection(coord);
-              const raw = book.getRaw(row, col);
-              const display = book.getDisplay(row, col);
-              const isError = display.startsWith("#");
-              const header = row === 0;
-              return (
-                <div
-                  key={col}
-                  id={`cell-${row}-${col}`}
-                  role="gridcell"
-                  aria-colindex={col + 1}
-                  aria-selected={selected}
-                  className={[
-                    "absolute box-border flex items-center overflow-hidden border-r border-b border-[var(--line)] px-2 text-[13px] leading-none",
-                    header ? "font-medium" : "",
-                    selected && !active ? "bg-[var(--select)]" : "bg-[var(--paper)]",
-                    active
-                      ? "z-10 bg-[var(--paper)] ring-2 ring-inset ring-[var(--accent)]"
-                      : "",
-                    isError ? "text-[var(--danger)]" : "text-[var(--ink)]",
-                  ].join(" ")}
-                  style={{
-                    left: colOffsets[col],
-                    width: book.colWidths[col],
-                    height: ROW_HEIGHT,
-                  }}
-                  title={raw.startsWith("=") ? raw : undefined}
-                >
-                  {active && editing ? (
-                    <input
-                      ref={inputRef}
-                      aria-label={`Edit ${toA1(row, col)}`}
-                      className="h-full w-full bg-transparent font-mono text-[13px] text-[var(--ink)] outline-none"
-                      value={draft}
-                      onChange={(e) => onDraftChange(e.target.value)}
-                      onPointerDown={(e) => e.stopPropagation()}
-                    />
-                  ) : (
-                    <span className="w-full truncate font-mono">{display}</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ))}
-
-        {visibleCols.map((col) => (
-          <div
-            key={`h-${col}`}
-            className="absolute z-20 flex items-center justify-center border-r border-b border-[var(--line)] bg-[var(--header)] text-[11px] font-medium tracking-wide text-[var(--muted)]"
-            style={{
-              top: viewport.scrollTop,
-              left: ROW_GUTTER_WIDTH + colOffsets[col],
-              width: book.colWidths[col],
-              height: COL_HEADER_HEIGHT,
-            }}
-          >
-            {colToLetter(col)}
-            <div
-              data-resize=""
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={`Resize column ${colToLetter(col)}`}
-              className="absolute top-0 right-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-[var(--accent)]"
-              onPointerDown={(e) => resizeCol(col, e)}
-            />
-          </div>
-        ))}
-
-        {visibleRows.map((row) => (
-          <div
-            key={`g-${row}`}
-            className="absolute z-20 flex items-center justify-end border-r border-b border-[var(--line)] bg-[var(--header)] pr-2 text-[11px] tabular-nums text-[var(--muted)]"
-            style={{
-              top: COL_HEADER_HEIGHT + row * ROW_HEIGHT,
-              left: viewport.scrollLeft,
-              width: ROW_GUTTER_WIDTH,
-              height: ROW_HEIGHT,
-            }}
-          >
-            {row + 1}
-          </div>
-        ))}
-
         <div
-          className="absolute z-30 border-r border-b border-[var(--line)] bg-[var(--header)]"
-          style={{
-            top: viewport.scrollTop,
-            left: viewport.scrollLeft,
-            width: ROW_GUTTER_WIDTH,
-            height: COL_HEADER_HEIGHT,
-          }}
+          ref={selectRef}
+          className="absolute top-0 left-0 bg-[var(--select)]"
+          style={{ height: ROW_HEIGHT }}
+        />
+        <div ref={cellLayerRef} className="absolute inset-0" />
+        <div
+          ref={activeRef}
+          className="absolute top-0 left-0 box-border ring-2 ring-inset ring-[var(--accent)]"
+          style={{ height: ROW_HEIGHT }}
         />
       </div>
     </div>
