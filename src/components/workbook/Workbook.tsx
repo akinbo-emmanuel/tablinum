@@ -4,6 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { parseA1, toA1 } from "@/lib/grid/address";
 import { formatValue } from "@/lib/grid/formulas";
 import { useWorkbook } from "@/hooks/useWorkbook";
+import { useShortcutModifier } from "@/hooks/useShortcutModifier";
 import { DataGrid } from "@/components/grid/DataGrid";
 import { CommandPalette, type Command } from "@/components/shell/CommandPalette";
 
@@ -38,6 +39,8 @@ export function Workbook() {
   const [query, setQuery] = useState("");
   const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "day");
   const [help, setHelp] = useState(false);
+  const shortcutModifier = useShortcutModifier();
+  const shortcut = shortcutModifier === "⌘" ? "⌘" : "Ctrl+";
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -166,7 +169,7 @@ export function Workbook() {
             className="rounded border border-[var(--line)] px-2 py-1 hover:bg-[var(--select)]"
             onClick={() => setPalette(true)}
           >
-            ⌘K
+            {shortcut}K
           </button>
           <button
             type="button"
@@ -229,7 +232,7 @@ export function Workbook() {
               : "No numeric cells"}
         </span>
         <span className="ml-auto hidden sm:inline">
-          Enter edit · Shift+arrows select · ⌘C TSV · ? help
+          Enter edit · Shift+arrows select · {shortcut}C TSV · ? help
         </span>
       </footer>
 
@@ -259,9 +262,9 @@ export function Workbook() {
               <li>Arrows — move · Shift+arrows — expand range</li>
               <li>Enter / F2 — edit · Esc — cancel</li>
               <li>Tab — next column · Delete — clear</li>
-              <li>⌘/Ctrl+C / V / X — copy, paste TSV, cut</li>
-              <li>⌘/Ctrl+Z — undo · Shift+⌘Z — redo</li>
-              <li>⌘/Ctrl+K — command palette · type A1 to jump</li>
+              <li>{shortcut}C / V / X — copy, paste TSV, cut</li>
+              <li>{shortcut}Z — undo · Shift+{shortcut}Z — redo</li>
+              <li>{shortcut}K — command palette · type A1 to jump</li>
             </ul>
             <p className="mt-4 text-[12px] leading-5 text-[var(--ink)]">
               Formulas: <code>=D2*E2</code>, <code>=SUM(D2:D201)</code>,{" "}

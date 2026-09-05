@@ -16,6 +16,19 @@ test("moves and expands the active selection from the keyboard", async ({ page }
   await expect(page.getByText("1 × 2 selected")).toBeVisible();
 });
 
+test.describe("on non-Apple platforms", () => {
+  test.use({
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/134.0 Safari/537.36",
+  });
+
+  test("shows Ctrl shortcuts", async ({ page }) => {
+    await expect(page.getByRole("button", { name: "Ctrl+K" })).toBeVisible();
+    await page.keyboard.press("?");
+    await expect(page.getByRole("dialog", { name: "Keyboard map" })).toContainText("Ctrl+C / V / X");
+  });
+});
+
 test("edits and calculates a formula in a cell", async ({ page }) => {
   const grid = page.getByRole("grid");
   const formulaBar = page.getByRole("textbox", { name: "Formula bar" });
