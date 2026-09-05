@@ -299,12 +299,13 @@ class Parser {
   }
 }
 
+const numberFormat = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 4,
+  minimumFractionDigits: 0,
+});
+
 export function formatValue(value: number | string): string {
   if (typeof value === "string") return value;
   if (!Number.isFinite(value)) return "#NUM!";
-  if (Number.isInteger(value)) return value.toLocaleString("en-US");
-  return value.toLocaleString("en-US", {
-    maximumFractionDigits: 4,
-    minimumFractionDigits: 0,
-  });
+  return numberFormat.format(value);
 }

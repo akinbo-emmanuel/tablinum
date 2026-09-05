@@ -17,10 +17,10 @@ import {
   ROW_HEIGHT,
 } from "@/lib/grid/constants";
 import {
-  columnGridBackground,
   paintCellLayer,
   paintRowGutter,
   paintSelectionChrome,
+  visibleRowWindow,
   type CellPaintApi,
 } from "@/lib/grid/paint";
 import type { WorkbookApi } from "@/hooks/useWorkbook";
@@ -52,6 +52,8 @@ export function DataGrid({
   const inputRef = useRef<HTMLInputElement>(null);
   const dragging = useRef(false);
   const paintApiRef = useRef<CellPaintApi | null>(null);
+  const lastPaintRef = useRef<{ api: CellPaintApi; start: number; count: number } | null>(null);
+  const lastNavigationRef = useRef<{ active: Coord; editing: boolean } | null>(null);
 
   const colOffsets = useMemo(() => {
     const offsets = [0];
@@ -63,10 +65,6 @@ export function DataGrid({
 
   const totalWidth = colOffsets[colOffsets.length - 1] ?? 0;
   const totalHeight = book.rows * ROW_HEIGHT;
-  const gridBackground = useMemo(
-    () => columnGridBackground(colOffsets, totalWidth),
-    [colOffsets, totalWidth],
-  );
 
   const paintFrame = useCallback(() => {
     const el = scroller.current;
@@ -76,9 +74,15 @@ export function DataGrid({
     const activeEl = activeRef.current;
     const api = paintApiRef.current;
     if (!el || !gutter || !layer || !selectEl || !activeEl || !api) return;
-    paintRowGutter(el, gutter, api.rows);
-    paintCellLayer(el, layer, api);
-    paintSelectionChrome(el, selectEl, activeEl, api);
+    const { start, count } = visibleRowWindow(el);
+    const last = lastPaintRef.current;
+    if (last?.api === api && last.start === start && last.count === count) return;
+    // Measure once, then write. Reading clientHeight between the gutter and
+    // cell updates would force a synchronous layout of the partially updated grid.
+    paintRowGutter({ start, count }, gutter, api.rows);
+    paintCellLayer({ start, count }, layer, api);
+    paintSelectionChrome(selectEl, activeEl, api);
+    lastPaintRef.current = { api, start, count };
   }, []);
 
   useLayoutEffect(() => {
@@ -141,9 +145,14 @@ export function DataGrid({
     [colOffsets],
   );
 
-  useEffect(() => {
-    if (!editing) scrollActiveIntoView(book.active);
-  }, [book.active, editing, scrollActiveIntoView]);
+  useLayoutEffect(() => {
+    const last = lastNavigationRef.current;
+    if (!editing && (last?.active !== book.active || last.editing !== editing)) {
+      scrollActiveIntoView(book.active);
+    }
+    lastNavigationRef.current = { active: book.active, editing };
+    paintFrame();
+  }, [book.active, editing, scrollActiveIntoView, paintFrame]);
 
   useEffect(() => {
     if (editing) inputRef.current?.focus();
@@ -273,8 +282,12 @@ export function DataGrid({
     const el = scroller.current;
     if (!el) return null;
     const rect = el.getBoundingClientRect();
-    const x = event.clientX - rect.left + el.scrollLeft - ROW_GUTTER_WIDTH;
-    const y = event.clientY - rect.top + el.scrollTop - COL_HEADER_HEIGHT;
+    const viewportX = event.clientX - rect.left;
+    const viewportY = event.clientY - rect.top;
+    if (viewportX < ROW_GUTTER_WIDTH || viewportY < COL_HEADER_HEIGHT ||
+        viewportX >= el.clientWidth || viewportY >= el.clientHeight) return null;
+    const x = viewportX + el.scrollLeft - ROW_GUTTER_WIDTH;
+    const y = viewportY + el.scrollTop - COL_HEADER_HEIGHT;
     if (x < 0 || y < 0) return null;
     const row = Math.min(book.rows - 1, Math.max(0, Math.floor(y / ROW_HEIGHT)));
     let col = 0;
@@ -288,6 +301,8 @@ export function DataGrid({
     if (target.closest("[data-resize]") || target.closest("input")) return;
     const coord = pointerToCoord(event);
     if (!coord) return;
+    event.preventDefault();
+    scroller.current?.focus({ preventScroll: true });
     if (editing) onCommitEdit();
     dragging.current = true;
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -328,7 +343,7 @@ export function DataGrid({
     <div className="relative h-full min-h-0">
       <div
         ref={scroller}
-        className="grid-scroller h-full overflow-auto bg-[var(--paper)]"
+        className="grid-scroller h-full overflow-auto overscroll-none bg-[var(--paper)]"
         role="grid"
         aria-rowcount={book.rows}
         aria-colcount={book.cols}
@@ -339,6 +354,8 @@ export function DataGrid({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onLostPointerCapture={onPointerUp}
         onDoubleClick={onDoubleClick}
       >
         <div
@@ -346,7 +363,6 @@ export function DataGrid({
           style={{
             width: totalWidth + ROW_GUTTER_WIDTH,
             height: totalHeight + COL_HEADER_HEIGHT,
-            ...gridBackground,
           }}
         >
           <div
@@ -363,6 +379,8 @@ export function DataGrid({
             {Array.from({ length: book.cols }, (_, col) => (
               <div
                 key={`h-${col}`}
+                role="columnheader"
+                aria-colindex={col + 1}
                 className="absolute top-0 flex items-center justify-center border-r border-[var(--line)] text-[11px] font-medium tracking-wide text-[var(--muted)]"
                 style={{
                   left: ROW_GUTTER_WIDTH + colOffsets[col],
@@ -382,55 +400,38 @@ export function DataGrid({
               </div>
             ))}
           </div>
-          {editing ? (
-            <input
-              ref={inputRef}
-              aria-label={`Edit ${toA1(book.active.row, book.active.col)}`}
-              className="absolute z-20 box-border bg-[var(--paper)] px-2 font-mono text-[13px] text-[var(--ink)] outline-none ring-2 ring-inset ring-[var(--accent)]"
-              style={{
-                top: COL_HEADER_HEIGHT + book.active.row * ROW_HEIGHT,
-                left: ROW_GUTTER_WIDTH + colOffsets[book.active.col],
-                width: book.colWidths[book.active.col],
-                height: ROW_HEIGHT,
-              }}
-              value={draft}
-              onChange={(e) => onDraftChange(e.target.value)}
-              onPointerDown={(e) => e.stopPropagation()}
+          <div className="relative isolate" style={{ height: totalHeight }}>
+            <div
+              ref={gutterRef}
+              className="sticky left-0 z-10"
+              style={{ width: ROW_GUTTER_WIDTH, height: totalHeight }}
             />
-          ) : null}
+            <div
+              className="absolute top-0 overflow-hidden"
+              style={{ left: ROW_GUTTER_WIDTH, width: totalWidth, height: totalHeight }}
+            >
+              <div ref={selectRef} aria-hidden className="pointer-events-none absolute bg-[var(--select)]" />
+              <div ref={cellLayerRef} className="absolute inset-0" />
+              <div ref={activeRef} data-testid="active-cell" aria-hidden className="pointer-events-none absolute box-border ring-2 ring-inset ring-[var(--accent)]" />
+              {editing ? (
+                <input
+                  ref={inputRef}
+                  aria-label={`Edit ${toA1(book.active.row, book.active.col)}`}
+                  className="absolute z-20 box-border bg-[var(--paper)] px-2 font-mono text-[13px] text-[var(--ink)] outline-none ring-2 ring-inset ring-[var(--accent)]"
+                  style={{
+                    top: book.active.row * ROW_HEIGHT,
+                    left: colOffsets[book.active.col],
+                    width: book.colWidths[book.active.col],
+                    height: ROW_HEIGHT,
+                  }}
+                  value={draft}
+                  onChange={(e) => onDraftChange(e.target.value)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                />
+              ) : null}
+            </div>
+          </div>
         </div>
-      </div>
-      <div
-        ref={gutterRef}
-        aria-hidden
-        className="pointer-events-none absolute z-20 overflow-hidden border-r border-[var(--line)] bg-[var(--header)]"
-        style={{
-          left: 0,
-          top: COL_HEADER_HEIGHT,
-          bottom: 0,
-          width: ROW_GUTTER_WIDTH,
-        }}
-      />
-      <div
-        className="pointer-events-none absolute z-10 overflow-hidden"
-        style={{
-          left: ROW_GUTTER_WIDTH,
-          top: COL_HEADER_HEIGHT,
-          right: 0,
-          bottom: 0,
-        }}
-      >
-        <div
-          ref={selectRef}
-          className="absolute top-0 left-0 bg-[var(--select)]"
-          style={{ height: ROW_HEIGHT }}
-        />
-        <div ref={cellLayerRef} className="absolute inset-0" />
-        <div
-          ref={activeRef}
-          className="absolute top-0 left-0 box-border ring-2 ring-inset ring-[var(--accent)]"
-          style={{ height: ROW_HEIGHT }}
-        />
       </div>
     </div>
   );

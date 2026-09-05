@@ -8,7 +8,7 @@ The name refers to the records room of a Roman house.
 
 ## Features
 
-- Windowed rows and columns with overscan; only the viewport is mounted
+- Windowed rows with overscan across 26 columns; cells and frozen headers share native scrolling
 - Pointer and keyboard selection (arrows, Shift+arrows, Tab, Home, End, click-drag)
 - Formula bar and in-cell edit (Enter, F2, type-to-replace)
 - Formulas: arithmetic, `SUM`, `AVERAGE`, `MIN`, `MAX`, ranges, cycle detection (`#CYCLE!`), `#DIV/0!`
@@ -24,6 +24,7 @@ The demo ledger is generated from `(row, col)` rather than stored as hundreds of
 
 ```bash
 pnpm install
+pnpm exec playwright install chromium firefox webkit
 pnpm dev
 ```
 
@@ -34,6 +35,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `pnpm dev` | Development server |
 | `pnpm build` | Production build |
 | `pnpm lint` | ESLint |
+| `pnpm test:e2e` | Playwright keyboard-flow tests |
 
 ## Architecture
 
@@ -53,7 +55,7 @@ src/
     constants.ts               Grid size, row height, overscan
 ```
 
-**Virtualization.** The scroll surface is sized to `rows × rowHeight` by the sum of column widths. Cells and headers in view (plus overscan) are the only nodes created. Headers track `scrollTop` and `scrollLeft` so row labels are not mounted for all 50,000 rows.
+**Virtualization.** The scroll surface is sized to `rows × rowHeight` by the sum of column widths. A bounded pool of rows (plus overscan) renders all 26 columns. Cells, row numbers, selection, and the editor use sheet coordinates inside the same native scroll surface; sticky headers freeze the top and left edges. JavaScript recycles only rows entering the buffer, retaining overlapping DOM subtrees. Each row is a small, contained paint surface with its own grid lines, avoiding a sheet-sized painted background. Number formatting reuses one formatter rather than creating one per cell.
 
 **Data.** `demoCell(row, col)` supplies the default ledger. `cells` stores edits and explicit clears. Restoring the demo drops the overlay.
 
